@@ -53,7 +53,7 @@ export const LoginPage: React.FC = () => {
 
           <div>
             <h1 className="text-4xl sm:text-5xl font-black text-white tracking-tight mb-3">
-              PeopleHub
+              Employee Managemnent
             </h1>
             <p className="text-sm text-slate-400 leading-relaxed max-w-md">
               Purpose-built workspace for team members — equipped with your personal
