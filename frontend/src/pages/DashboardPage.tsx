@@ -6,24 +6,29 @@ import type {
   Task,
   AttendanceRecord,
   LeaveRecord,
+  Timesheet,
 } from '../types';
 import { Navbar } from '../components/Navbar';
 import { Sidebar } from '../components/Sidebar';
 import type { TabType } from '../components/Sidebar';
 import { OverviewTab } from '../tabs/OverviewTab';
+import { TimesheetTab } from '../tabs/TimesheetTab';
 import { TasksTab } from '../tabs/TasksTab';
 import { AttendanceTab } from '../tabs/AttendanceTab';
 import { LeavesTab } from '../tabs/LeavesTab';
+import { MyTeamTab } from '../tabs/MyTeamTab';
 import { ApplyLeaveModal } from '../components/ApplyLeaveModal';
 import { CreateTaskModal } from '../components/CreateTaskModal';
+import { AddTimesheetModal } from '../components/AddTimesheetModal';
 
 export const DashboardPage: React.FC = () => {
   const { currentUser } = useAuth();
   const [activeTab, setActiveTab] = useState<TabType>('overview');
 
-  // State
+  // Application Data States
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
 
@@ -34,6 +39,17 @@ export const DashboardPage: React.FC = () => {
   // Modals
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [showTimesheetModal, setShowTimesheetModal] = useState(false);
+  const [editingTimesheet, setEditingTimesheet] = useState<Timesheet | null>(null);
+
+  const isManager = currentUser?.role === 'Manager';
+
+  // Ensure non-managers cannot stay on 'myteam' tab
+  useEffect(() => {
+    if (!isManager && activeTab === 'myteam') {
+      setActiveTab('overview');
+    }
+  }, [isManager, activeTab]);
 
   // Fetch summary and initial data whenever currentUser changes
   useEffect(() => {
@@ -44,18 +60,21 @@ export const DashboardPage: React.FC = () => {
   const loadAllData = async (employeeId: number) => {
     setLoadingData(true);
     try {
-      const [sumData, tasksData, attData, leavesData] = await Promise.all([
-        apiService.getDashboardSummary(employeeId),
-        apiService.getTasks(employeeId),
-        apiService.getAttendance(employeeId),
-        apiService.getLeaves(employeeId),
-      ]);
+      const [sumData, tasksData, timesheetData, attData, leavesData] =
+        await Promise.all([
+          apiService.getDashboardSummary(employeeId),
+          apiService.getTasks(employeeId),
+          apiService.getTimesheets(employeeId),
+          apiService.getAttendance(employeeId),
+          apiService.getLeaves(employeeId),
+        ]);
       setSummary(sumData);
       setTasks(tasksData);
+      setTimesheets(timesheetData);
       setAttendance(attData);
       setLeaves(leavesData);
     } catch (err) {
-      console.error('Error loading employee data:', err);
+      console.error('Error loading employee workspace data:', err);
     } finally {
       setLoadingData(false);
     }
@@ -70,6 +89,7 @@ export const DashboardPage: React.FC = () => {
       await loadAllData(currentUser.id);
     } catch (err) {
       console.error('Clock-in failed:', err);
+      throw err;
     } finally {
       setClocking(false);
     }
@@ -84,8 +104,37 @@ export const DashboardPage: React.FC = () => {
       await loadAllData(currentUser.id);
     } catch (err) {
       console.error('Clock-out failed:', err);
+      throw err;
     } finally {
       setClocking(false);
+    }
+  };
+
+  // Timesheet Save (Add or Update)
+  const handleSaveTimesheet = async (data: {
+    date: string;
+    project_name: string;
+    work_description: string;
+    hours_worked: string;
+  }) => {
+    if (!currentUser) return;
+    if (editingTimesheet) {
+      await apiService.updateTimesheet(editingTimesheet.id, data);
+    } else {
+      await apiService.addTimesheet(currentUser.id, data);
+    }
+    setEditingTimesheet(null);
+    await loadAllData(currentUser.id);
+  };
+
+  // Timesheet Delete
+  const handleDeleteTimesheet = async (timesheetId: number) => {
+    if (!currentUser) return;
+    try {
+      await apiService.deleteTimesheet(timesheetId);
+      await loadAllData(currentUser.id);
+    } catch (err) {
+      console.error('Failed to delete timesheet entry:', err);
     }
   };
 
@@ -99,7 +148,7 @@ export const DashboardPage: React.FC = () => {
       await apiService.updateTaskStatus(taskId, status);
       await loadAllData(currentUser.id);
     } catch (err) {
-      console.error('Failed to update task:', err);
+      console.error('Failed to update task status:', err);
     }
   };
 
@@ -122,7 +171,11 @@ export const DashboardPage: React.FC = () => {
     due_date: string;
   }) => {
     if (!currentUser) return;
-    await apiService.createTask(currentUser.id, data);
+    await apiService.createTask(currentUser.id, {
+      ...data,
+      project_name: currentUser.project_name || 'General',
+      assigned_date: new Date().toISOString().split('T')[0],
+    });
     await loadAllData(currentUser.id);
   };
 
@@ -150,6 +203,7 @@ export const DashboardPage: React.FC = () => {
         <Sidebar
           activeTab={activeTab}
           onTabChange={setActiveTab}
+          userRole={currentUser?.role || 'Employee'}
           pendingTasksCount={pendingTasksCount}
           pendingLeavesCount={pendingLeavesCount}
         />
@@ -163,6 +217,22 @@ export const DashboardPage: React.FC = () => {
                 onClockIn={handleClockIn}
                 onClockOut={handleClockOut}
                 clocking={clocking}
+              />
+            )}
+
+            {activeTab === 'timesheet' && (
+              <TimesheetTab
+                timesheets={timesheets}
+                onOpenAddModal={() => {
+                  setEditingTimesheet(null);
+                  setShowTimesheetModal(true);
+                }}
+                onEditEntry={(entry) => {
+                  setEditingTimesheet(entry);
+                  setShowTimesheetModal(true);
+                }}
+                onDeleteEntry={handleDeleteTimesheet}
+                loading={loadingData}
               />
             )}
 
@@ -193,6 +263,10 @@ export const DashboardPage: React.FC = () => {
                 loading={loadingData}
               />
             )}
+
+            {activeTab === 'myteam' && isManager && currentUser && (
+              <MyTeamTab managerId={currentUser.id} />
+            )}
           </div>
         </main>
       </div>
@@ -208,6 +282,16 @@ export const DashboardPage: React.FC = () => {
         isOpen={showTaskModal}
         onClose={() => setShowTaskModal(false)}
         onSubmit={handleCreateTask}
+      />
+
+      <AddTimesheetModal
+        isOpen={showTimesheetModal}
+        onClose={() => {
+          setShowTimesheetModal(false);
+          setEditingTimesheet(null);
+        }}
+        onSubmit={handleSaveTimesheet}
+        editingEntry={editingTimesheet}
       />
     </div>
   );

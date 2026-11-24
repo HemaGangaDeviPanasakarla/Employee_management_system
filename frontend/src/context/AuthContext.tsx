@@ -1,11 +1,12 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import type { Employee } from '../types';
+import type { Employee, RegisterData } from '../types';
 import { apiService } from '../services/api';
 
 interface AuthContextType {
   currentUser: Employee | null;
   loading: boolean;
-  login: (email: string) => Promise<boolean>;
+  login: (email: string, password?: string) => Promise<{ success: boolean; error?: string }>;
+  register: (data: RegisterData) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   switchUser: (employee: Employee) => void;
 }
@@ -24,7 +25,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (parsed?.id) {
-          // Verify with database that this employee actually exists in PostgreSQL
+          // Verify with database that this employee exists
           apiService
             .getEmployeeById(parsed.id)
             .then((verifiedEmp) => {
@@ -32,9 +33,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               localStorage.setItem(STORAGE_KEY, JSON.stringify(verifiedEmp));
             })
             .catch((err) => {
-              console.warn('Cached employee not found in database or server unreachable, clearing session:', err);
-              setCurrentUser(null);
-              localStorage.removeItem(STORAGE_KEY);
+              console.warn('Session verification fallback to stored user:', err);
+              // Fallback to cached user if offline or server momentarily starting
+              setCurrentUser(parsed);
             })
             .finally(() => {
               setLoading(false);
@@ -48,15 +49,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(false);
   }, []);
 
-  const login = async (email: string): Promise<boolean> => {
+  const login = async (email: string, password?: string): Promise<{ success: boolean; error?: string }> => {
     try {
-      const employee = await apiService.login(email);
+      const employee = await apiService.login(email, password);
       setCurrentUser(employee);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(employee));
-      return true;
-    } catch (err) {
-      console.error('Login error:', err);
-      return false;
+      return { success: true };
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || 'Invalid email or password. Please try again.';
+      return { success: false, error: msg };
+    }
+  };
+
+  const register = async (data: RegisterData): Promise<{ success: boolean; error?: string }> => {
+    try {
+      await apiService.register(data);
+      return { success: true };
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || 'Registration failed. Please try again.';
+      return { success: false, error: msg };
     }
   };
 
@@ -71,7 +82,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ currentUser, loading, login, logout, switchUser }}>
+    <AuthContext.Provider value={{ currentUser, loading, login, register, logout, switchUser }}>
       {children}
     </AuthContext.Provider>
   );
